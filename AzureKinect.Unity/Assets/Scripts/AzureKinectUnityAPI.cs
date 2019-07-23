@@ -52,9 +52,11 @@ public class AzureKinectUnityAPI
     }
     private static AzureKinectUnityAPI api = new AzureKinectUnityAPI();
 
+    // Note these textures are flipped vertically
     public Texture2D RGBTexture { get; private set; }
     public Texture2D IRTexture { get; private set; }
     public Texture2D DepthTexture { get; private set; }
+    public string SerialNumber { get; private set; }
 
     public bool DebugLogging
     {
@@ -86,6 +88,16 @@ public class AzureKinectUnityAPI
 
             if (TryStartStreamsNative(deviceIndex))
             {
+                char[] serialNumber = new char[256];
+                if(TryGetDeviceSerialNumberNative(deviceIndex, serialNumber, (uint) serialNumber.Length))
+                {
+                    SerialNumber = new string(serialNumber);
+                }
+                else
+                {
+                    DebugLog($"Failed to obtain device serial number: {deviceIndex}");
+                }
+
                 streaming = true;
             }
             else
@@ -97,45 +109,59 @@ public class AzureKinectUnityAPI
 
     public void Update()
     {
-        if (streaming)
+        if (!streaming)
         {
-            if (!TryUpdateNative())
+            Start();
+        }
+
+        if (streaming &&
+            TryUpdateNative() &&
+            (RGBTexture == null || IRTexture == null || DepthTexture == null))
+        {
+            bool succeeded = TryGetShaderResourceViewsNative(
+                deviceIndex,
+                out var rgbSrv,
+                out var rgbWidth,
+                out var rgbHeight,
+                out var rgbBpp,
+                out var irSrv,
+                out var irWidth,
+                out var irHeight,
+                out var irBpp,
+                out var depthSrv,
+                out var depthWidth,
+                out var depthHeight,
+                out var depthBpp);
+            DebugLog($"Succeeded obtaining shader resource views: {succeeded}");
+
+            if (succeeded &
+                RGBTexture == null &&
+                rgbSrv != null &&
+                rgbWidth > 0 &&
+                rgbHeight > 0)
             {
-                DebugLog("Failed to update AzureKinect.Unity plugin.");
+                DebugLog($"Creating RGBTexture: {rgbWidth}x{rgbHeight}");
+                RGBTexture = Texture2D.CreateExternalTexture((int)rgbWidth, (int)rgbHeight, TextureFormat.BGRA32, false, false, rgbSrv);
             }
-            else if (RGBTexture == null ||
-                IRTexture == null ||
-                DepthTexture == null)
+
+            if (succeeded &&
+                IRTexture == null &&
+                irSrv != null &&
+                irWidth > 0 &&
+                irHeight > 0)
             {
-                bool succeeded = TryGetShaderResourceViewsNative(
-                    deviceIndex,
-                    out var rgbSrv,
-                    out var rgbWidth,
-                    out var rgbHeight,
-                    out var rgbBpp,
-                    out var irSrv,
-                    out var irWidth,
-                    out var irHeight,
-                    out var irBpp,
-                    out var depthSrv,
-                    out var depthWidth,
-                    out var depthHeight,
-                    out var depthBpp);
+                DebugLog($"Creating IRTexture: {irWidth}x{irHeight}");
+                IRTexture = Texture2D.CreateExternalTexture((int)irWidth, (int)irHeight, TextureFormat.R16, false, false, irSrv);
+            }
 
-                if (succeeded && RGBTexture == null)
-                {
-                    RGBTexture = Texture2D.CreateExternalTexture((int) rgbWidth, (int) rgbHeight, TextureFormat.RGBA32, false, false, rgbSrv);
-                }
-
-                if (succeeded && IRTexture == null)
-                {
-                    IRTexture = Texture2D.CreateExternalTexture((int) irWidth, (int) irHeight, TextureFormat.R16, false, false, irSrv);
-                }
-
-                if (succeeded && DepthTexture == null)
-                {
-                    RGBTexture = Texture2D.CreateExternalTexture((int) depthWidth, (int) depthHeight, TextureFormat.R16, false, false, depthSrv);
-                }
+            if (succeeded &&
+                DepthTexture == null &&
+                depthSrv != null &&
+                depthWidth > 0 &&
+                depthHeight > 0)
+            {
+                DebugLog($"Creating DepthTexture: {depthWidth}x{depthHeight}");
+                DepthTexture = Texture2D.CreateExternalTexture((int)depthWidth, (int)depthHeight, TextureFormat.R16, false, false, depthSrv);
             }
         }
     }

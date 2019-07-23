@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -14,9 +15,20 @@ public class AzureKinectHelper : MonoBehaviour
     [SerializeField]
     RawImage depthImage = null;
 
+    [SerializeField]
+    Text serialNumberText = null;
+
     void OnEnable()
     {
         AzureKinectUnityAPI.Instance.Start();
+        if (AzureKinectUnityAPI.Instance.SerialNumber != null)
+        {
+            serialNumberText.text = AzureKinectUnityAPI.Instance.SerialNumber;
+        }
+        else
+        {
+            serialNumberText.text = "Device Not Found";
+        }
     }
 
     void OnDisable()

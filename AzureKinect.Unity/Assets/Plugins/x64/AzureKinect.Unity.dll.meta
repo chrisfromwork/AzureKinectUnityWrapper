@@ -97,7 +97,7 @@ PluginImporter:
     second:
       enabled: 1
       settings:
-        CPU: AnyCPU
+        CPU: X64
         DontProcess: false
         PlaceholderPath: 
         SDK: AnySDK
