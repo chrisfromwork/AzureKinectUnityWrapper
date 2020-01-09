@@ -1,0 +1,3 @@
+[submodule "external/MixedReality-SpectatorView"]
+	path = external/MixedReality-SpectatorView
+	url = https://github.com/microsoft/MixedReality-SpectatorView.git
