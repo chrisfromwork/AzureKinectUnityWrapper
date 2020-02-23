@@ -61,19 +61,20 @@ bool AzureKinectWrapper::TryGetDeviceSerialNumber(unsigned int index, char *seri
     return true;
 }
 
-bool AzureKinectWrapper::TryGetShaderResourceViews(unsigned int index,
-                                                   ID3D11ShaderResourceView *&rgbSrv,
-                                                   unsigned int &rgbWidth,
-                                                   unsigned int &rgbHeight,
-                                                   unsigned int &rgbBpp,
-                                                   ID3D11ShaderResourceView *&irSrv,
-                                                   unsigned int &irWidth,
-                                                   unsigned int &irHeight,
-                                                   unsigned int &irBpp,
-                                                   ID3D11ShaderResourceView *&depthSrv,
-                                                   unsigned int &depthWidth,
-                                                   unsigned int &depthHeight,
-                                                   unsigned int &depthBpp)
+bool AzureKinectWrapper::TryGetShaderResourceViews(
+	unsigned int index,
+    ID3D11ShaderResourceView *&rgbSrv,
+    unsigned int &rgbWidth,
+    unsigned int &rgbHeight,
+    unsigned int &rgbBpp,
+    ID3D11ShaderResourceView *&depthSrv,
+    unsigned int &depthWidth,
+    unsigned int &depthHeight,
+    unsigned int &depthBpp,
+	ID3D11ShaderResourceView *&pointCloudTemplateSrv,
+	unsigned int &pointCloudTemplateWidth,
+	unsigned int &pointCloudTemplateHeight,
+	unsigned int &pointCloudTemplateBpp)
 {
     EnterCriticalSection(&resourcesCritSec);
     if (resourcesMap.count(index) == 0)
@@ -88,33 +89,38 @@ bool AzureKinectWrapper::TryGetShaderResourceViews(unsigned int index,
     rgbHeight = resourcesMap[index].rgbFrameDimensions.height;
     rgbBpp = resourcesMap[index].rgbFrameDimensions.bpp;
 
-    irSrv = resourcesMap[index].irSrv;
-    irWidth = resourcesMap[index].irFrameDimensions.width;
-    irHeight = resourcesMap[index].irFrameDimensions.height;
-    irBpp = resourcesMap[index].irFrameDimensions.bpp;
-
     depthSrv = resourcesMap[index].depthSrv;
     depthWidth = resourcesMap[index].depthFrameDimensions.width;
     depthHeight = resourcesMap[index].depthFrameDimensions.height;
     depthBpp = resourcesMap[index].depthFrameDimensions.bpp;
 
+	pointCloudTemplateSrv = resourcesMap[index].pointCloudTemplateSrv;
+	pointCloudTemplateWidth = resourcesMap[index].pointCloudTemplateFrameDimensions.width;
+	pointCloudTemplateHeight = resourcesMap[index].pointCloudTemplateFrameDimensions.height;
+	pointCloudTemplateBpp = resourcesMap[index].pointCloudTemplateFrameDimensions.bpp;
+
     LeaveCriticalSection(&resourcesCritSec);
     return true;
 }
 
-bool AzureKinectWrapper::TryStartStreams(unsigned int index)
+bool AzureKinectWrapper::TryStartStreams(
+	unsigned int index,
+	k4a_image_format_t colorFormat,
+	k4a_color_resolution_t colorResolution,
+	k4a_depth_mode_t depthMode,
+	k4a_fps_t fps)
 {
 	if (deviceMap.count(index) > 0)
 	{
 		return true;
 	}
 
+	k4a_device_t k4aDevice = NULL;
 	k4a_result_t result = K4A_RESULT_SUCCEEDED;
 	k4a_calibration_t calibration;
 	k4a_transformation_t transformation;
 	k4a_image_t transformedColorImage;
 	k4a_image_t xyTableImage;
-	k4a_image_t pointCloudImage;
 
 	if (static_cast<unsigned int>(index) > GetDeviceCount() - 1)
 	{
@@ -122,17 +128,17 @@ bool AzureKinectWrapper::TryStartStreams(unsigned int index)
 		goto FailedExit;
 	}
 
-	if (K4A_RESULT_SUCCEEDED != k4a_device_open(K4A_DEVICE_DEFAULT, &k4aDevice))
+	if (K4A_RESULT_SUCCEEDED != k4a_device_open(index, &k4aDevice))
 	{
 		OutputDebugString(L"Failed to open device: " + index);
 		goto FailedExit;
 	}
 
 	// Not all of the modes support 30fps, view k4a.c to determine a valid configuration
-	config.color_format = K4A_IMAGE_FORMAT_COLOR_BGRA32;
-	config.color_resolution = K4A_COLOR_RESOLUTION_2160P;
-	config.depth_mode = K4A_DEPTH_MODE_WFOV_2X2BINNED;
-	config.camera_fps = K4A_FRAMES_PER_SECOND_30;
+	config.color_format = colorFormat; // K4A_IMAGE_FORMAT_COLOR_BGRA32;
+	config.color_resolution = colorResolution; // K4A_COLOR_RESOLUTION_2160P;
+	config.depth_mode = depthMode; // K4A_DEPTH_MODE_WFOV_2X2BINNED;
+	config.camera_fps = fps; // K4A_FRAMES_PER_SECOND_30;
 
 	if (K4A_RESULT_SUCCEEDED != k4a_device_start_cameras(k4aDevice, &config))
 	{
@@ -161,13 +167,6 @@ bool AzureKinectWrapper::TryStartStreams(unsigned int index)
 		&xyTableImage);
 	create_xy_table(&calibration, xyTableImage);
 	xyTableMap[index] = xyTableImage;
-
-	k4a_image_create(K4A_IMAGE_FORMAT_CUSTOM,
-		calibration.depth_camera_calibration.resolution_width,
-		calibration.depth_camera_calibration.resolution_height,
-		calibration.depth_camera_calibration.resolution_width * (int)sizeof(k4a_float3_t),
-		&pointCloudImage);
-	pointCloudMap[index] = pointCloudImage;
 
 	cachedColorImageSizeMap[index] = calibration.color_camera_calibration.resolution_width * calibration.color_camera_calibration.resolution_height * 4 * sizeof(uint8_t);
 	cachedColorImageBufferMap[index] = std::make_unique<byte[]>(cachedColorImageSizeMap[index]);
@@ -223,19 +222,6 @@ bool AzureKinectWrapper::TryUpdate()
 
 		auto transformation = transformationMap[pair.first];
 		auto transformedColorImage = transformedColorMap[pair.first];
-		auto pointCloudImage = pointCloudMap[pair.first];
-		auto xyTableImage = xyTableMap[pair.first];
-
-		auto irImage = k4a_capture_get_ir_image(capture);
-		if (irImage)
-		{
-			UpdateResources(irImage,
-				resources.irSrv,
-				resources.irTexture,
-				resources.irFrameDimensions,
-				DXGI_FORMAT_R16_UNORM);
-		}
-		k4a_image_release(irImage);
 
 		auto colorImage = k4a_capture_get_color_image(capture);
 		auto depthImage = k4a_capture_get_depth_image(capture);
@@ -265,19 +251,55 @@ bool AzureKinectWrapper::TryUpdate()
 			}
 		}
 
-		if (depthImage &&
-			pointCloudImage)
+		if (depthImage)
 		{
-			int pointCount = 0;
-			generate_point_cloud(depthImage,
-				xyTableImage,
-				pointCloudImage,
-				&pointCount);
-			UpdateResources(pointCloudImage,
+			UpdateResources(depthImage,
 				resources.depthSrv,
 				resources.depthTexture,
 				resources.depthFrameDimensions,
+				DXGI_FORMAT_R16_UNORM);
+		}
+
+		if (depthImage &&
+			pointCloudTemplateMap.count(pair.first) == 0)
+		{
+			auto xyTableImage = xyTableMap[pair.first];
+			auto calibration = calibrationMap[pair.first];
+
+			k4a_image_t pointCloudTemplateImage;
+			k4a_image_create(K4A_IMAGE_FORMAT_CUSTOM,
+				calibration.depth_camera_calibration.resolution_width,
+				calibration.depth_camera_calibration.resolution_height,
+				calibration.depth_camera_calibration.resolution_width * (int)sizeof(k4a_float3_t),
+				&pointCloudTemplateImage);
+			pointCloudTemplateMap[pair.first] = pointCloudTemplateImage;
+
+			k4a_image_t depthTemplateImage;
+			k4a_image_create(k4a_image_get_format(depthImage),
+				calibration.depth_camera_calibration.resolution_width,
+				calibration.depth_camera_calibration.resolution_height,
+				k4a_image_get_stride_bytes(depthImage),
+				&depthTemplateImage);
+
+			// Getting depth projection for 1m depth;
+			auto buffer = k4a_image_get_buffer(depthTemplateImage);
+			for (int i = 0; i < k4a_image_get_size(depthTemplateImage); i += 2)
+			{
+				*reinterpret_cast<uint16_t*>(&(buffer[i])) = 1000;
+			}
+
+			int pointCount = 0;
+			generate_point_cloud(depthTemplateImage,
+				xyTableImage,
+				pointCloudTemplateImage,
+				&pointCount);
+			UpdateResources(pointCloudTemplateImage,
+				resources.pointCloudTemplateSrv,
+				resources.pointCloudTemplateTexture,
+				resources.pointCloudTemplateFrameDimensions,
 				DXGI_FORMAT_R32G32B32_FLOAT);
+
+			k4a_image_release(depthTemplateImage);
 		}
 
 		k4a_image_release(colorImage);
@@ -404,10 +426,10 @@ void AzureKinectWrapper::StopStreaming(unsigned int index)
 		xyTableMap.erase(index);
 	}
 
-	if (pointCloudMap.count(index) != 0)
+	if (pointCloudTemplateMap.count(index) != 0)
 	{
-		k4a_image_release(pointCloudMap[index]);
-		pointCloudMap.erase(index);
+		k4a_image_release(pointCloudTemplateMap[index]);
+		pointCloudTemplateMap.erase(index);
 	}
 
 	if (cachedColorImageBufferMap.count(index) != 0)

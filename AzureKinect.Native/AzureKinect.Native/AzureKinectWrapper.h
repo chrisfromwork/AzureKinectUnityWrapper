@@ -17,15 +17,20 @@ public:
         unsigned int &rgbWidth,
         unsigned int &rgbHeight,
         unsigned int &rgbBpp,
-        ID3D11ShaderResourceView *&irSrv,
-        unsigned int &irWidth,
-        unsigned int &irHeight,
-        unsigned int &irBpp,
         ID3D11ShaderResourceView *&depthSrv,
         unsigned int &depthWidth,
         unsigned int &depthHeight,
-        unsigned int &depthBpp);
-    bool TryStartStreams(unsigned int index);
+        unsigned int &depthBpp,
+		ID3D11ShaderResourceView *&pointCloudTemplateSrv,
+		unsigned int &pointCloudTemplateWidth,
+		unsigned int &pointCloudTemplateHeight,
+		unsigned int &pointCloudTemplateBpp);
+    bool TryStartStreams(
+		unsigned int index,
+		k4a_image_format_t colorFormat,
+		k4a_color_resolution_t colorResolution,
+		k4a_depth_mode_t depthMode,
+		k4a_fps_t fps);
     bool TryUpdate();
 	bool TryGetCalibration(
 		int index,
@@ -65,23 +70,23 @@ private:
         ID3D11Texture2D *rgbTexture;
         ID3D11ShaderResourceView *rgbSrv;
         FrameDimensions rgbFrameDimensions;
-        ID3D11Texture2D *irTexture;
-        ID3D11ShaderResourceView *irSrv;
-        FrameDimensions irFrameDimensions;
         ID3D11Texture2D *depthTexture;
         ID3D11ShaderResourceView *depthSrv;
         FrameDimensions depthFrameDimensions;
+		ID3D11Texture2D *pointCloudTemplateTexture;
+		ID3D11ShaderResourceView *pointCloudTemplateSrv;
+		FrameDimensions pointCloudTemplateFrameDimensions;
     };
 
-    void UpdateResources(k4a_image_t image,
-                         ID3D11ShaderResourceView *&srv,
-                         ID3D11Texture2D *&tex,
-                         FrameDimensions &dim,
-                         DXGI_FORMAT format);
+    void UpdateResources(
+		k4a_image_t image,
+        ID3D11ShaderResourceView *&srv,
+        ID3D11Texture2D *&tex,
+        FrameDimensions &dim,
+        DXGI_FORMAT format);
 	void StopStreamingAll();
 
     ID3D11Device *d3d11Device;
-	k4a_device_t k4aDevice;
     static std::shared_ptr<AzureKinectWrapper> instance;
     std::map<int, k4a_device_t> deviceMap;
 
@@ -95,5 +100,5 @@ private:
 	std::map<int, k4a_transformation_t> transformationMap;
 	std::map<int, k4a_image_t> transformedColorMap;
 	std::map<int, k4a_image_t> xyTableMap;
-	std::map<int, k4a_image_t> pointCloudMap;
+	std::map<int, k4a_image_t> pointCloudTemplateMap;
 };

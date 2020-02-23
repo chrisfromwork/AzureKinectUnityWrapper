@@ -79,11 +79,20 @@ UNITYDLL bool Initialize()
 }
 
 UNITYDLL bool TryStartStreams(
-	unsigned int index)
+	unsigned int index,
+	int colorFormat,
+	int colorResolution,
+	int depthMode,
+	int fps)
 {
     if (azureKinectWrapper != nullptr)
     {
-        return azureKinectWrapper->TryStartStreams(index);
+        return azureKinectWrapper->TryStartStreams(
+			index,
+			(k4a_image_format_t) colorFormat,
+			(k4a_color_resolution_t) colorResolution,
+			(k4a_depth_mode_t) depthMode,
+			(k4a_fps_t) fps);
     }
 
     return false;
@@ -179,35 +188,37 @@ UNITYDLL bool TryGetDeviceSerialNumber(uint32_t index, char *serialNum, uint32_t
     return false;
 }
 
-UNITYDLL bool TryGetShaderResourceViews(unsigned int index,
-                                        ID3D11ShaderResourceView *&rgbSrv,
-                                        unsigned int &rgbWidth,
-                                        unsigned int &rgbHeight,
-                                        unsigned int &rgbBpp,
-                                        ID3D11ShaderResourceView *&irSrv,
-                                        unsigned int &irWidth,
-                                        unsigned int &irHeight,
-                                        unsigned int &irBpp,
-                                        ID3D11ShaderResourceView *&depthSrv,
-                                        unsigned int &depthWidth,
-                                        unsigned int &depthHeight,
-                                        unsigned int &depthBpp)
+UNITYDLL bool TryGetShaderResourceViews(
+	unsigned int index,
+    ID3D11ShaderResourceView *&rgbSrv,
+    unsigned int &rgbWidth,
+    unsigned int &rgbHeight,
+    unsigned int &rgbBpp,
+	ID3D11ShaderResourceView *&depthSrv,
+	unsigned int &depthWidth,
+	unsigned int &depthHeight,
+	unsigned int &depthBpp,
+	ID3D11ShaderResourceView *&pointCloudTemplateSrv,
+	unsigned int &pointCloudTemplateWidth,
+	unsigned int &pointCloudTemplateHeight,
+	unsigned int &pointCloudTemplateBpp)
 {
     if (azureKinectWrapper != nullptr)
     {
-        return azureKinectWrapper->TryGetShaderResourceViews(index,
-                                                             rgbSrv,
-                                                             rgbWidth,
-                                                             rgbHeight,
-                                                             rgbBpp,
-                                                             irSrv,
-                                                             irWidth,
-                                                             irHeight,
-                                                             irBpp,
-                                                             depthSrv,
-                                                             depthWidth,
-                                                             depthHeight,
-                                                             depthBpp);
+        return azureKinectWrapper->TryGetShaderResourceViews(
+			index,
+            rgbSrv,
+            rgbWidth,
+            rgbHeight,
+            rgbBpp,
+            depthSrv,
+            depthWidth,
+            depthHeight,
+            depthBpp,
+			pointCloudTemplateSrv,
+			pointCloudTemplateWidth,
+			pointCloudTemplateHeight,
+			pointCloudTemplateBpp);
     }
 
     return false;
