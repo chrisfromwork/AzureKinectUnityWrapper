@@ -3,8 +3,11 @@
     Properties
     {
 		_MainTex("Texture", 2D) = "white" {}
-		_DepthTex("Point Cloud Texture", 2D) = "black" {}
-		_CubeScale("Cube Scale", Range(0.00001, 5.0)) = 0.5
+		_DepthTex("Depth Texture", 2D) = "black" {}
+		_PointCloudTemplateTex("Point Cloud Template Texture", 2D) = "black" {}
+		_CubeScale("Cube Scale", Range(0.00001, 0.003)) = 0.0005
+		_MinDepth("Min Depth", Float) = 0.01
+		_MaxDepth("Max Dpeth", Float) = 10.0
 	}
     SubShader
     {
@@ -40,8 +43,13 @@
 			sampler2D _DepthTex;
 			float4 _DepthTex_ST;
 			float4 _DepthTex_TexelSize;
+			sampler2D _PointCloudTemplateTex;
+			float4 _PointCloudTemplateTex_ST;
 			float _CubeScale;
 			float4x4 _PointTransform;
+
+			float _MinDepth;
+			float _MaxDepth;
 
             v2g vert (appdata v)
             {
@@ -127,11 +135,19 @@
 						float2 uv = input[0].uv + float2(x * _DepthTex_TexelSize.x, y * _DepthTex_TexelSize.y);
 						if (uv.x > 0 && uv.y > 0 && uv.x < 1 && uv.y < 1)
 						{
-							float4 p0 = float4(tex2Dlod(_DepthTex, float4(input[0].uv, 0, 0)).xyz, 1.0f);
-							p0.y *= -1.0f; // Fix this inverted y prior to shader
-							p0 = p0 * 0.001f; // Convert from mm to m
-							float4 pos = mul(_PointTransform, p0);
-							CreateCube(tristream, pos.xyz, uv);
+							// Convert from normalized float back to depth in meters
+							float depth = (65535.0f * tex2Dlod(_DepthTex, float4(input[0].uv, 0, 0)).r) / 1000.0f;
+							if (depth < _MinDepth || depth > _MaxDepth)
+							{
+								continue;
+							}
+
+							float3 pointCloudTemplate = tex2Dlod(_PointCloudTemplateTex, float4(input[0].uv, 0, 0)).xyz;
+							pointCloudTemplate.y *= -1.0f;
+							pointCloudTemplate *= 0.001f;
+							pointCloudTemplate *= depth;
+							float4 pointCloud = mul(_PointTransform, float4(pointCloudTemplate, 1.0f));
+							CreateCube(tristream, pointCloud.xyz, uv);
 						}
 					}
 				}

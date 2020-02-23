@@ -5,6 +5,51 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using UnityEngine;
 
+[Serializable]
+public enum k4a_image_format_t : int
+{
+    K4A_IMAGE_FORMAT_COLOR_MJPG = 0,
+    K4A_IMAGE_FORMAT_COLOR_NV12,
+    K4A_IMAGE_FORMAT_COLOR_YUY2,
+    K4A_IMAGE_FORMAT_COLOR_BGRA32,
+    K4A_IMAGE_FORMAT_DEPTH16,
+    K4A_IMAGE_FORMAT_IR16,
+    K4A_IMAGE_FORMAT_CUSTOM8,
+    K4A_IMAGE_FORMAT_CUSTOM16,
+    K4A_IMAGE_FORMAT_CUSTOM,
+}
+
+[Serializable]
+public enum k4a_color_resolution_t : int
+{
+    K4A_COLOR_RESOLUTION_OFF = 0, /**< Color camera will be turned off with this setting */
+    K4A_COLOR_RESOLUTION_720P,    /**< 1280 * 720  16:9 */
+    K4A_COLOR_RESOLUTION_1080P,   /**< 1920 * 1080 16:9 */
+    K4A_COLOR_RESOLUTION_1440P,   /**< 2560 * 1440 16:9 */
+    K4A_COLOR_RESOLUTION_1536P,   /**< 2048 * 1536 4:3  */
+    K4A_COLOR_RESOLUTION_2160P,   /**< 3840 * 2160 16:9 */
+    K4A_COLOR_RESOLUTION_3072P,   /**< 4096 * 3072 4:3  */
+}
+
+[Serializable]
+public enum k4a_depth_mode_t : int
+{
+    K4A_DEPTH_MODE_OFF = 0,        /**< Depth sensor will be turned off with this setting. */
+    K4A_DEPTH_MODE_NFOV_2X2BINNED, /**< Depth captured at 320x288. Passive IR is also captured at 320x288. */
+    K4A_DEPTH_MODE_NFOV_UNBINNED,  /**< Depth captured at 640x576. Passive IR is also captured at 640x576. */
+    K4A_DEPTH_MODE_WFOV_2X2BINNED, /**< Depth captured at 512x512. Passive IR is also captured at 512x512. */
+    K4A_DEPTH_MODE_WFOV_UNBINNED,  /**< Depth captured at 1024x1024. Passive IR is also captured at 1024x1024. */
+    K4A_DEPTH_MODE_PASSIVE_IR,     /**< Passive IR only, captured at 1024x1024. */
+}
+
+[Serializable]
+public enum k4a_fps_t : int
+{
+    K4A_FRAMES_PER_SECOND_5 = 0, /**< 5 FPS */
+    K4A_FRAMES_PER_SECOND_15,    /**< 15 FPS */
+    K4A_FRAMES_PER_SECOND_30,    /**< 30 FPS */
+}
+
 public class AzureKinectUnityAPI
 {
     private const string AzureKinectPluginDll = "AzureKinect.Unity";
@@ -25,17 +70,22 @@ public class AzureKinectUnityAPI
         out uint rgbWidth,
         out uint rgbHeight,
         out uint rgbBpp,
-        out IntPtr irSrv,
-        out uint irWidth,
-        out uint irHeight,
-        out uint irBpp,
         out IntPtr depthSrv,
         out uint depthWidth,
         out uint depthHeight,
-        out uint depthBpp);
+        out uint depthBpp,
+        out IntPtr pointCloudTemplateSrv,
+        out uint pointCloudTemplateWidth,
+        out uint pointCloudTemplateHeight,
+        out uint pointCloudTemplateBpp);
 
     [DllImport(AzureKinectPluginDll, EntryPoint = "TryStartStreams")]
-    internal static extern bool TryStartStreamsNative(uint index);
+    internal static extern bool TryStartStreamsNative(
+        uint index,
+        int colorFormat,
+        int colorResolution,
+        int depthMode,
+        int fps);
 
     [DllImport(AzureKinectPluginDll, EntryPoint = "TryUpdate")]
     internal static extern bool TryUpdateNative();
@@ -70,19 +120,23 @@ public class AzureKinectUnityAPI
     [DllImport(AzureKinectPluginDll, EntryPoint = "StopStreaming")]
     internal static extern void StopStreamingNative(uint index);
 
-    public static AzureKinectUnityAPI Instance
+
+    public static AzureKinectUnityAPI Instance(uint deviceIndex)
     {
-        get
+        if (!apiDictionary.TryGetValue(deviceIndex, out AzureKinectUnityAPI api))
         {
-            return api;
+            api = new AzureKinectUnityAPI(deviceIndex);
+            apiDictionary.Add(deviceIndex, api);
         }
+
+        return api;
     }
-    private static AzureKinectUnityAPI api = new AzureKinectUnityAPI();
+    private static Dictionary<uint, AzureKinectUnityAPI> apiDictionary = new Dictionary<uint, AzureKinectUnityAPI>();
 
     // Note these textures are flipped vertically
     public Texture2D RGBTexture { get; private set; }
-    public Texture2D IRTexture { get; private set; }
     public Texture2D DepthTexture { get; private set; }
+    public Texture2D PointCloudTemplateTexture { get; private set; }
     public string SerialNumber { get; private set; }
     public CameraIntrinsics ColorIntrinsics => colorIntrinsics;
     public CameraExtrinsics ColorExtrinsics => colorExtrinsics;
@@ -123,8 +177,28 @@ public class AzureKinectUnityAPI
     private CameraExtrinsics colorExtrinsics;
     private CameraIntrinsics depthIntrinsics;
     private CameraExtrinsics depthExtrinsics;
+    private k4a_image_format_t colorFormat = k4a_image_format_t.K4A_IMAGE_FORMAT_COLOR_BGRA32;
+    private k4a_color_resolution_t colorResolution = k4a_color_resolution_t.K4A_COLOR_RESOLUTION_1080P;
+    private k4a_depth_mode_t depthMode = k4a_depth_mode_t.K4A_DEPTH_MODE_NFOV_UNBINNED;
+    private k4a_fps_t fps = k4a_fps_t.K4A_FRAMES_PER_SECOND_30;
 
-    private AzureKinectUnityAPI() { }
+    private AzureKinectUnityAPI(
+        uint deviceIndex)
+    {
+        this.deviceIndex = deviceIndex;
+    }
+
+    public void SetConfiguration(
+        k4a_image_format_t colorFormat,
+        k4a_color_resolution_t colorResolution,
+        k4a_depth_mode_t depthMode,
+        k4a_fps_t fps)
+    {
+        this.colorFormat = colorFormat;
+        this.colorResolution = colorResolution;
+        this.depthMode = depthMode;
+        this.fps = fps;
+    }
 
     public void Start()
     {
@@ -139,7 +213,12 @@ public class AzureKinectUnityAPI
             uint deviceCount = GetDeviceCountNative();
             DebugLog($"Devices Found: {deviceCount}");
 
-            if (TryStartStreamsNative(deviceIndex))
+            if (TryStartStreamsNative(
+                deviceIndex,
+                (int)colorFormat,
+                (int)colorResolution,
+                (int)depthMode,
+                (int)fps))
             {
                 char[] serialNumber = new char[256];
                 if(TryGetDeviceSerialNumberNative(deviceIndex, serialNumber, (uint) serialNumber.Length))
@@ -176,7 +255,7 @@ public class AzureKinectUnityAPI
 
         if (streaming &&
             TryUpdateNative() &&
-            (RGBTexture == null || IRTexture == null || DepthTexture == null))
+            (RGBTexture == null || DepthTexture == null || PointCloudTemplateTexture == null))
         {
             bool succeeded = TryGetShaderResourceViewsNative(
                 deviceIndex,
@@ -184,14 +263,14 @@ public class AzureKinectUnityAPI
                 out var rgbWidth,
                 out var rgbHeight,
                 out var rgbBpp,
-                out var irSrv,
-                out var irWidth,
-                out var irHeight,
-                out var irBpp,
                 out var depthSrv,
                 out var depthWidth,
                 out var depthHeight,
-                out var depthBpp);
+                out var depthBpp,
+                out var pointCloudSrv,
+                out var pointCloudWidth,
+                out var pointCloudHeight,
+                out var pointCloudBpp);
             DebugLog($"Succeeded obtaining shader resource views: {succeeded}");
 
             if (succeeded &
@@ -205,30 +284,28 @@ public class AzureKinectUnityAPI
             }
 
             if (succeeded &&
-                IRTexture == null &&
-                irSrv != null &&
-                irWidth > 0 &&
-                irHeight > 0)
-            {
-                DebugLog($"Creating IRTexture: {irWidth}x{irHeight}");
-                IRTexture = Texture2D.CreateExternalTexture((int)irWidth, (int)irHeight, TextureFormat.R16, false, false, irSrv);
-            }
-
-            if (succeeded &&
                 DepthTexture == null &&
                 depthSrv != null &&
                 depthWidth > 0 &&
                 depthHeight > 0)
             {
                 DebugLog($"Creating DepthTexture: {depthWidth}x{depthHeight}");
-                DepthTexture = Texture2D.CreateExternalTexture((int)depthWidth, (int)depthHeight, TextureFormat.BGRA32, false, false, depthSrv);
+                DepthTexture = Texture2D.CreateExternalTexture((int)depthWidth, (int)depthHeight, TextureFormat.R16, false, false, depthSrv);
             }
 
-            // TODO - only call once
-            if (succeeded)
-            //if (succeeded &&
-            //    (colorIntrinsics == null ||
-            //    depthIntrinsics == null))
+            if (succeeded &&
+                PointCloudTemplateTexture == null &&
+                pointCloudSrv != null &&
+                pointCloudWidth > 0 &&
+                pointCloudHeight > 0)
+            {
+                DebugLog($"Creating PointCloudTemplateTexture: {pointCloudWidth}x{pointCloudHeight}");
+                PointCloudTemplateTexture = Texture2D.CreateExternalTexture((int)pointCloudWidth, (int)pointCloudHeight, TextureFormat.BGRA32, false, false, pointCloudSrv);
+            }
+
+            if (succeeded &&
+                (colorIntrinsics == null ||
+                depthIntrinsics == null))
             {
                 float[] colorRotation = new float[9];
                 float[] colorTranslation = new float[3];
@@ -257,8 +334,8 @@ public class AzureKinectUnityAPI
                 if (obtainCalibration)
                 {
                     this.colorIntrinsics = new CameraIntrinsics();
-                    this.colorIntrinsics.ImageWidth = (uint) colorWidth;
-                    this.colorIntrinsics.ImageHeight = (uint) colorHeight;
+                    this.colorIntrinsics.ImageWidth = (uint)colorWidth;
+                    this.colorIntrinsics.ImageHeight = (uint)colorHeight;
                     this.colorIntrinsics.PrincipalPoint.x = colorIntrinsics[0];
                     this.colorIntrinsics.PrincipalPoint.y = colorIntrinsics[1];
                     this.colorIntrinsics.FocalLength.x = colorIntrinsics[2];
@@ -292,15 +369,12 @@ public class AzureKinectUnityAPI
         }
     }
 
-    // It's unclear if azure kinect uses left handed or right handed notation for rotation
-    // Regardless, it seems that depth and rgb translations are zero
-
     private Quaternion CalculateUnityRotation(float[] azureRotation)
     {
         Matrix4x4 rotationMatrix = new Matrix4x4(
-            new Vector4(azureRotation[0], azureRotation[3], azureRotation[6], 1.0f),
-            new Vector4(azureRotation[1], azureRotation[4], azureRotation[7], 1.0f),
-            new Vector4(azureRotation[2], azureRotation[5], azureRotation[8], 1.0f),
+            new Vector4(azureRotation[0], azureRotation[1], azureRotation[2], 1.0f),
+            new Vector4(azureRotation[3], azureRotation[4], azureRotation[5], 1.0f),
+            new Vector4(azureRotation[6], azureRotation[7], azureRotation[8], 1.0f),
             Vector4.one);
         Quaternion rotationQuat = rotationMatrix.rotation;
         return rotationQuat;

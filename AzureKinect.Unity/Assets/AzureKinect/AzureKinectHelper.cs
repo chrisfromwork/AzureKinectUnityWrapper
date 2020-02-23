@@ -9,16 +9,28 @@ using UnityEngine.UI;
 public class AzureKinectHelper : MonoBehaviour
 {
     [SerializeField]
-    RawImage rgbImage = null;
+    uint deviceIndex = 0;
 
     [SerializeField]
-    RawImage irImage = null;
+    private k4a_image_format_t colorFormat = k4a_image_format_t.K4A_IMAGE_FORMAT_COLOR_BGRA32;
+
+    [SerializeField]
+    private k4a_color_resolution_t colorResolution = k4a_color_resolution_t.K4A_COLOR_RESOLUTION_1080P;
+
+    [SerializeField]
+    private k4a_depth_mode_t depthMode = k4a_depth_mode_t.K4A_DEPTH_MODE_NFOV_UNBINNED;
+
+    [SerializeField]
+    private k4a_fps_t fps = k4a_fps_t.K4A_FRAMES_PER_SECOND_30;
+
+    [SerializeField]
+    RawImage rgbImage = null;
 
     [SerializeField]
     RawImage depthImage = null;
 
     [SerializeField]
-    Text serialNumberText = null;
+    RawImage pointCloudImage = null;
 
     [SerializeField]
     float markerSize = 0.05f;
@@ -35,83 +47,92 @@ public class AzureKinectHelper : MonoBehaviour
     private SpectatorViewOpenCVInterface opencvAPI;
     private byte[] colorImage;
     private Dictionary<int, GameObject> markerPrefab = new Dictionary<int, GameObject>();
+    private bool locatingMarker = false;
 
-    void OnEnable()
+    public void StartLocatingMarker()
     {
-        AzureKinectUnityAPI.Instance.Start();
-        if (AzureKinectUnityAPI.Instance.SerialNumber != null)
-        {
-            serialNumberText.text = AzureKinectUnityAPI.Instance.SerialNumber;
-        }
-        else
-        {
-            serialNumberText.text = "Device Not Found";
-        }
+        AzureKinectUnityAPI.Instance(deviceIndex).PointTransform = Matrix4x4.identity;
+        locatingMarker = true;
+    }
 
+    public void StopLocatingMarker()
+    {
+        locatingMarker = false;
+    }
+
+    protected void Awake()
+    {
+        AzureKinectUnityAPI.Instance(deviceIndex).SetConfiguration(colorFormat, colorResolution, depthMode, fps);
+        AzureKinectUnityAPI.Instance(deviceIndex).Start();
         opencvAPI = new SpectatorViewOpenCVInterface();
         opencvAPI.Initialize(markerSize);
     }
 
-    void OnDestroy()
+    protected void OnDestroy()
     {
-        AzureKinectUnityAPI.Instance.Stop();
+        AzureKinectUnityAPI.Instance(deviceIndex).Stop();
     }
 
-    void Update()
+    protected void Update()
     {
-        AzureKinectUnityAPI.Instance.Update();
-        if (rgbImage.texture == null &&
-            AzureKinectUnityAPI.Instance.RGBTexture != null)
+        AzureKinectUnityAPI.Instance(deviceIndex).Update();
+        if (rgbImage != null &&
+            rgbImage.texture == null &&
+            AzureKinectUnityAPI.Instance(deviceIndex).RGBTexture != null)
         {
-            rgbImage.texture = AzureKinectUnityAPI.Instance.RGBTexture;
+            rgbImage.texture = AzureKinectUnityAPI.Instance(deviceIndex).RGBTexture;
         }
 
-        if (irImage.texture == null &&
-            AzureKinectUnityAPI.Instance.IRTexture != null)
+        if (depthImage != null &&
+            depthImage.texture == null &&
+            AzureKinectUnityAPI.Instance(deviceIndex).DepthTexture != null)
         {
-            irImage.texture = AzureKinectUnityAPI.Instance.IRTexture;
+            depthImage.texture = AzureKinectUnityAPI.Instance(deviceIndex).DepthTexture;
         }
 
-        if (depthImage.texture == null &&
-            AzureKinectUnityAPI.Instance.DepthTexture != null)
+        if (pointCloudImage != null &&
+            pointCloudImage.texture == null &&
+            AzureKinectUnityAPI.Instance(deviceIndex).PointCloudTemplateTexture != null)
         {
-            depthImage.texture = AzureKinectUnityAPI.Instance.DepthTexture;
+            pointCloudImage.texture = AzureKinectUnityAPI.Instance(deviceIndex).PointCloudTemplateTexture;
         }
 
-        if (AzureKinectUnityAPI.Instance.ColorIntrinsics != null &&
-            AzureKinectUnityAPI.Instance.TryGetColorImageBuffer(ref colorImage))
+        if (locatingMarker)
         {
-            CameraExtrinsics extrinsics = new CameraExtrinsics();
-            extrinsics.ViewFromWorld = Matrix4x4.identity;
-            Dictionary<int, Marker> dictionary;
-            if (!testMarker)
+            if (testMarker)
             {
-                dictionary = opencvAPI.ProcessImage(
+                AzureKinectUnityAPI.Instance(deviceIndex).PointTransform = Matrix4x4.TRS(testMarkerPosition, Quaternion.identity, Vector3.one);
+                locatingMarker = false;
+            }
+            else if (AzureKinectUnityAPI.Instance(deviceIndex).ColorIntrinsics != null &&
+                AzureKinectUnityAPI.Instance(deviceIndex).TryGetColorImageBuffer(ref colorImage))
+            {
+                CameraExtrinsics extrinsics = new CameraExtrinsics();
+                extrinsics.ViewFromWorld = Matrix4x4.identity;
+                Dictionary<int, Marker> dictionary = opencvAPI.ProcessImage(
                     colorImage,
-                    AzureKinectUnityAPI.Instance.ColorIntrinsics.ImageWidth,
-                    AzureKinectUnityAPI.Instance.ColorIntrinsics.ImageHeight,
+                    AzureKinectUnityAPI.Instance(deviceIndex).ColorIntrinsics.ImageWidth,
+                    AzureKinectUnityAPI.Instance(deviceIndex).ColorIntrinsics.ImageHeight,
                     PixelFormat.BGRA8,
-                    AzureKinectUnityAPI.Instance.ColorIntrinsics,
+                    AzureKinectUnityAPI.Instance(deviceIndex).ColorIntrinsics,
                     new CameraExtrinsics());
-            }
-            else
-            {
-                dictionary = new Dictionary<int, Marker>();
-                dictionary.Add(0, new Marker(0, testMarkerPosition, Quaternion.identity));
-            }
 
-            foreach(var markerPair in dictionary)
-            {
-                if (!markerPrefab.TryGetValue(markerPair.Key, out var go) &&
-                    markerVisualPrefab != null)
+                foreach (var markerPair in dictionary)
                 {
-                    go = Instantiate(markerVisualPrefab);
-                    markerPrefab.Add(markerPair.Key, go);
-                    go.transform.localScale *= markerSize;
-                }
+                    if (!markerPrefab.TryGetValue(markerPair.Key, out var go) &&
+                        markerVisualPrefab != null)
+                    {
+                        go = Instantiate(markerVisualPrefab);
+                        markerPrefab.Add(markerPair.Key, go);
+                        go.transform.localScale *= markerSize;
+                    }
 
-                var markerTransform = Matrix4x4.TRS(markerPair.Value.Position, markerPair.Value.Rotation, Vector3.one);
-                AzureKinectUnityAPI.Instance.PointTransform = markerTransform.inverse;
+                    // We won't support multiple markers.
+                    var markerTransform = Matrix4x4.TRS(markerPair.Value.Position, markerPair.Value.Rotation, Vector3.one);
+                    AzureKinectUnityAPI.Instance(deviceIndex).PointTransform = markerTransform.inverse;
+                    locatingMarker = false;
+                    break;
+                }
             }
         }
     }
