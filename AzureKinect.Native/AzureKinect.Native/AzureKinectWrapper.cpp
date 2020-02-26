@@ -293,12 +293,33 @@ bool AzureKinectWrapper::TryUpdate()
 				xyTableImage,
 				pointCloudTemplateImage,
 				&pointCount);
-			UpdateResources(pointCloudTemplateImage,
+
+			// Unity does not support DXGI_FORMAT_R32G32B32_FLOAT
+			// To work around this we convert to R32G32B32A32
+			k4a_image_t rgbaImage;
+			k4a_image_create(K4A_IMAGE_FORMAT_CUSTOM,
+				calibration.depth_camera_calibration.resolution_width,
+				calibration.depth_camera_calibration.resolution_height,
+				calibration.depth_camera_calibration.resolution_width * (int)sizeof(float) * 4,
+				&rgbaImage);
+
+			buffer = k4a_image_get_buffer(pointCloudTemplateImage);
+			byte *tempBuffer = k4a_image_get_buffer(rgbaImage);
+			for (int i = 0; i < k4a_image_get_width_pixels(rgbaImage) * k4a_image_get_height_pixels(rgbaImage); i++)
+			{
+				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i)]);
+				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 1)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i + 1)]);
+				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 2)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i + 2)]);
+				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 3)]) = 1.0;
+			}
+
+			UpdateResources(rgbaImage,
 				resources.pointCloudTemplateSrv,
 				resources.pointCloudTemplateTexture,
 				resources.pointCloudTemplateFrameDimensions,
-				DXGI_FORMAT_R32G32B32_FLOAT);
+				DXGI_FORMAT_R32G32B32A32_FLOAT);
 
+			k4a_image_release(rgbaImage);
 			k4a_image_release(depthTemplateImage);
 		}
 
