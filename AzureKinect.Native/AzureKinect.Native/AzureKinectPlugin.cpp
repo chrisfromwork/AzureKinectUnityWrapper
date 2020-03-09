@@ -12,7 +12,7 @@ static IUnityGraphics *s_graphics = nullptr;
 static ID3D11Device *s_device = nullptr;
 std::unique_ptr<AzureKinectWrapper> azureKinectWrapper;
 
-static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType eventType)
+static void __cdecl OnGraphicsDeviceEvent(UnityGfxDeviceEventType eventType)
 {
     switch (eventType)
     {
@@ -37,7 +37,7 @@ static void UNITY_INTERFACE_API OnGraphicsDeviceEvent(UnityGfxDeviceEventType ev
     }
 }
 
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces *unityInterfaces)
+extern "C" void UNITY_INTERFACE_EXPORT __cdecl UnityPluginLoad(IUnityInterfaces *unityInterfaces)
 {
     OutputDebugString(L"UnityPluginLoad Event called for AzureKinect.Unity. UnityInterfaces was null: " +
                       (unityInterfaces == nullptr));
@@ -47,7 +47,7 @@ extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginLoad(IUnit
     OnGraphicsDeviceEvent(kUnityGfxDeviceEventInitialize);
 }
 
-extern "C" void UNITY_INTERFACE_EXPORT UNITY_INTERFACE_API UnityPluginUnload()
+extern "C" void UNITY_INTERFACE_EXPORT __cdecl UnityPluginUnload()
 {
     OutputDebugString(L"UnityPluginUnload Event called for AzureKinect.Unity.");
     s_graphics->UnregisterDeviceEventCallback(OnGraphicsDeviceEvent);
