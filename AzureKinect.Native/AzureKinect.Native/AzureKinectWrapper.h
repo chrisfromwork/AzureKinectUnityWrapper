@@ -1,5 +1,11 @@
 #pragma once
 
+#include "FrameDimensions.h"
+#include "AzureKinectFrame.h"
+#include <atomic>
+
+#define MAX_NUM_CACHED_FRAMES 5
+
 class AzureKinectWrapper
 {
 public:
@@ -58,13 +64,6 @@ public:
     void StopStreaming(unsigned int index);
 
 private:
-    struct FrameDimensions
-    {
-        unsigned int width;
-        unsigned int height;
-        unsigned int bpp;
-    };
-
     struct DeviceResources
     {
         ID3D11Texture2D *rgbTexture;
@@ -78,19 +77,20 @@ private:
 		FrameDimensions pointCloudTemplateFrameDimensions;
     };
 
-    void UpdateResources(
-		k4a_image_t image,
-        ID3D11ShaderResourceView *&srv,
-        ID3D11Texture2D *&tex,
-        FrameDimensions &dim,
-        DXGI_FORMAT format);
 	void StopStreamingAll();
+	void RunCaptureLoop(int index);
+	void CreateResources(
+		byte *buffer,
+		ID3D11ShaderResourceView *&srv,
+		ID3D11Texture2D *&tex,
+		FrameDimensions &dim,
+		DXGI_FORMAT format);
 
     ID3D11Device *d3d11Device;
     static std::shared_ptr<AzureKinectWrapper> instance;
     std::map<int, k4a_device_t> deviceMap;
 
-	std::map<int, DeviceResources> resourcesMap;
+	std::map<int, std::shared_ptr<DeviceResources>> resourcesMap;
     CRITICAL_SECTION resourcesCritSec;
 	k4a_device_configuration_t config = K4A_DEVICE_CONFIG_INIT_DISABLE_ALL;
 	
@@ -101,4 +101,8 @@ private:
 	std::map<int, k4a_image_t> transformedColorMap;
 	std::map<int, k4a_image_t> xyTableMap;
 	std::map<int, k4a_image_t> pointCloudTemplateMap;
+
+	std::map<int, std::shared_ptr<AzureKinectFrame>> _frameMap;
+	std::map<int, std::shared_ptr<std::thread>> _captureThreads;
+	std::map<int, std::atomic<bool>> _stopRequestedMap;
 };

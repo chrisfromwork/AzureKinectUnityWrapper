@@ -161,9 +161,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="AzureKinectFrame.h" />
     <ClInclude Include="AzureKinectPlugin.h" />
     <ClInclude Include="AzureKinectWrapper.h" />
     <ClInclude Include="DirectXHelper.h" />
+    <ClInclude Include="FrameDimensions.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="IUnityGraphics.h" />
     <ClInclude Include="IUnityGraphicsD3D11.h" />
@@ -173,6 +175,7 @@
     <ClInclude Include="UndistortHelper.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AzureKinectFrame.cpp" />
     <ClCompile Include="AzureKinectPlugin.cpp" />
     <ClCompile Include="AzureKinectWrapper.cpp" />
     <ClCompile Include="dllmain.cpp" />

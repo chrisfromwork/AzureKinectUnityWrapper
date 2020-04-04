@@ -84,20 +84,20 @@ bool AzureKinectWrapper::TryGetShaderResourceViews(
         return false;
     }
 
-    rgbSrv = resourcesMap[index].rgbSrv;
-    rgbWidth = resourcesMap[index].rgbFrameDimensions.width;
-    rgbHeight = resourcesMap[index].rgbFrameDimensions.height;
-    rgbBpp = resourcesMap[index].rgbFrameDimensions.bpp;
+    rgbSrv = resourcesMap[index]->rgbSrv;
+    rgbWidth = resourcesMap[index]->rgbFrameDimensions.width;
+    rgbHeight = resourcesMap[index]->rgbFrameDimensions.height;
+    rgbBpp = resourcesMap[index]->rgbFrameDimensions.bpp;
 
-    depthSrv = resourcesMap[index].depthSrv;
-    depthWidth = resourcesMap[index].depthFrameDimensions.width;
-    depthHeight = resourcesMap[index].depthFrameDimensions.height;
-    depthBpp = resourcesMap[index].depthFrameDimensions.bpp;
+    depthSrv = resourcesMap[index]->depthSrv;
+    depthWidth = resourcesMap[index]->depthFrameDimensions.width;
+    depthHeight = resourcesMap[index]->depthFrameDimensions.height;
+    depthBpp = resourcesMap[index]->depthFrameDimensions.bpp;
 
-	pointCloudTemplateSrv = resourcesMap[index].pointCloudTemplateSrv;
-	pointCloudTemplateWidth = resourcesMap[index].pointCloudTemplateFrameDimensions.width;
-	pointCloudTemplateHeight = resourcesMap[index].pointCloudTemplateFrameDimensions.height;
-	pointCloudTemplateBpp = resourcesMap[index].pointCloudTemplateFrameDimensions.bpp;
+	pointCloudTemplateSrv = resourcesMap[index]->pointCloudTemplateSrv;
+	pointCloudTemplateWidth = resourcesMap[index]->pointCloudTemplateFrameDimensions.width;
+	pointCloudTemplateHeight = resourcesMap[index]->pointCloudTemplateFrameDimensions.height;
+	pointCloudTemplateBpp = resourcesMap[index]->pointCloudTemplateFrameDimensions.bpp;
 
     LeaveCriticalSection(&resourcesCritSec);
     return true;
@@ -121,6 +121,9 @@ bool AzureKinectWrapper::TryStartStreams(
 	k4a_transformation_t transformation;
 	k4a_image_t transformedColorImage;
 	k4a_image_t xyTableImage;
+	FrameDimensions colorDimensions;
+	FrameDimensions depthDimensions;
+	FrameDimensions pointCloudDimensions;
 
 	if (static_cast<unsigned int>(index) > GetDeviceCount() - 1)
 	{
@@ -171,6 +174,56 @@ bool AzureKinectWrapper::TryStartStreams(
 	cachedColorImageSizeMap[index] = calibration.color_camera_calibration.resolution_width * calibration.color_camera_calibration.resolution_height * 4 * sizeof(uint8_t);
 	cachedColorImageBufferMap[index] = std::make_unique<byte[]>(cachedColorImageSizeMap[index]);
 
+	colorDimensions.width = calibration.depth_camera_calibration.resolution_width;
+	colorDimensions.height = calibration.depth_camera_calibration.resolution_height;
+	colorDimensions.bpp = 4 * (int)sizeof(uint8_t);
+	depthDimensions.width = calibration.depth_camera_calibration.resolution_width;
+	depthDimensions.height = calibration.depth_camera_calibration.resolution_height;
+	depthDimensions.bpp = (int)sizeof(uint16_t);
+	pointCloudDimensions.width = calibration.depth_camera_calibration.resolution_width;
+	pointCloudDimensions.height = calibration.depth_camera_calibration.resolution_height;
+	pointCloudDimensions.bpp = 4 * (int)sizeof(float);
+
+	if (_frameMap.count(index) == 0)
+	{
+		_frameMap[index] = std::make_shared<AzureKinectFrame>(colorDimensions, depthDimensions, pointCloudDimensions);
+	}
+
+	EnterCriticalSection(&resourcesCritSec);
+	if (resourcesMap.count(index) == 0)
+	{
+		auto frame = _frameMap[index];
+		frame->TryBeginReading();
+		std::shared_ptr<DeviceResources> resources = std::make_shared<DeviceResources>();
+		resources->rgbFrameDimensions = colorDimensions;
+		CreateResources(
+			_frameMap[index]->GetFrameBuffer(AzureKinectImageType::Color),
+			resources->rgbSrv,
+			resources->rgbTexture,
+			resources->rgbFrameDimensions,
+			DXGI_FORMAT_B8G8R8A8_UNORM);
+		resources->depthFrameDimensions = depthDimensions;
+		CreateResources(
+			_frameMap[index]->GetFrameBuffer(AzureKinectImageType::Depth),
+			resources->depthSrv,
+			resources->depthTexture,
+			resources->depthFrameDimensions,
+			DXGI_FORMAT_R16_UNORM);
+		resources->pointCloudTemplateFrameDimensions = pointCloudDimensions;
+		CreateResources(
+			_frameMap[index]->GetFrameBuffer(AzureKinectImageType::PointCloud),
+			resources->pointCloudTemplateSrv,
+			resources->pointCloudTemplateTexture,
+			resources->pointCloudTemplateFrameDimensions,
+			DXGI_FORMAT_R32G32B32A32_FLOAT);
+		frame->EndReading();
+		resourcesMap[index] = resources;
+	}
+	LeaveCriticalSection(&resourcesCritSec);
+
+	_stopRequestedMap[index] = false;
+	_captureThreads[index] = std::make_shared<std::thread>(std::bind(&AzureKinectWrapper::RunCaptureLoop, this, index));
+
 	return true;
 
 FailedExit:
@@ -189,146 +242,42 @@ bool AzureKinectWrapper::TryUpdate()
         return false;
     }
 
-    k4a_capture_t capture = NULL;
-    bool observedFailure = false;
 	for (auto pair : deviceMap)
 	{
+		auto index = pair.first;
 		auto device = pair.second;
 
-		switch (k4a_device_get_capture(device, &capture, 0))
+		if (resourcesMap.count(index) > 0 &&
+			_frameMap.count(index) > 0)
 		{
-		case K4A_WAIT_RESULT_SUCCEEDED:
-			break;
-		case K4A_WAIT_RESULT_TIMEOUT:
-			OutputDebugString(L"Timed out waiting for capture: " + pair.first);
-			observedFailure = true;
-			continue;
-		case K4A_WAIT_RESULT_FAILED:
-			OutputDebugString(L"Failed to capture: " + pair.first);
-			observedFailure = true;
-			continue;
-		}
-
-		EnterCriticalSection(&resourcesCritSec);
-		if (resourcesMap.count(pair.first) == 0)
-		{
-			resourcesMap[pair.first] = DeviceResources{
-				nullptr, nullptr, {}, nullptr, nullptr, {}, nullptr, nullptr, {}
-			};
-		}
-
-		DeviceResources &resources = resourcesMap[pair.first];
-		LeaveCriticalSection(&resourcesCritSec);
-
-		auto transformation = transformationMap[pair.first];
-		auto transformedColorImage = transformedColorMap[pair.first];
-
-		auto colorImage = k4a_capture_get_color_image(capture);
-		auto depthImage = k4a_capture_get_depth_image(capture);
-
-		if (colorImage &&
-			depthImage)
-		{
-			if (cachedColorImageBufferMap.count(pair.first) != 0)
+			auto resources = resourcesMap[index];
+			auto frame = _frameMap[index];
+			if (frame->TryBeginReading())
 			{
-				auto colorImageBuffer = k4a_image_get_buffer(colorImage);
-				memcpy(cachedColorImageBufferMap[pair.first].get(), colorImageBuffer, k4a_image_get_size(colorImage));
-			}
-
-			k4a_result_t result = k4a_transformation_color_image_to_depth_camera(
-				transformation,
-				depthImage,
-				colorImage,
-				transformedColorImage);
-
-			if (result == K4A_RESULT_SUCCEEDED)
-			{
-				UpdateResources(transformedColorImage,
-					resources.rgbSrv,
-					resources.rgbTexture,
-					resources.rgbFrameDimensions,
-					DXGI_FORMAT_B8G8R8A8_UNORM);
+				frame->ReadImage(
+					AzureKinectImageType::Color,
+					d3d11Device,
+					resources->rgbSrv,
+					resources->rgbTexture,
+					resources->rgbFrameDimensions);
+				frame->ReadImage(
+					AzureKinectImageType::Depth,
+					d3d11Device,
+					resources->depthSrv,
+					resources->depthTexture,
+					resources->depthFrameDimensions);
+				frame->ReadImage(
+					AzureKinectImageType::PointCloud,
+					d3d11Device,
+					resources->pointCloudTemplateSrv,
+					resources->pointCloudTemplateTexture,
+					resources->pointCloudTemplateFrameDimensions);
+				frame->EndReading();
 			}
 		}
-
-		if (depthImage)
-		{
-			UpdateResources(depthImage,
-				resources.depthSrv,
-				resources.depthTexture,
-				resources.depthFrameDimensions,
-				DXGI_FORMAT_R16_UNORM);
-		}
-
-		if (depthImage &&
-			pointCloudTemplateMap.count(pair.first) == 0)
-		{
-			auto xyTableImage = xyTableMap[pair.first];
-			auto calibration = calibrationMap[pair.first];
-
-			k4a_image_t pointCloudTemplateImage;
-			k4a_image_create(K4A_IMAGE_FORMAT_CUSTOM,
-				calibration.depth_camera_calibration.resolution_width,
-				calibration.depth_camera_calibration.resolution_height,
-				calibration.depth_camera_calibration.resolution_width * (int)sizeof(k4a_float3_t),
-				&pointCloudTemplateImage);
-			pointCloudTemplateMap[pair.first] = pointCloudTemplateImage;
-
-			k4a_image_t depthTemplateImage;
-			k4a_image_create(k4a_image_get_format(depthImage),
-				calibration.depth_camera_calibration.resolution_width,
-				calibration.depth_camera_calibration.resolution_height,
-				k4a_image_get_stride_bytes(depthImage),
-				&depthTemplateImage);
-
-			// Getting depth projection for 1m depth;
-			auto buffer = k4a_image_get_buffer(depthTemplateImage);
-			for (int i = 0; i < k4a_image_get_size(depthTemplateImage); i += 2)
-			{
-				*reinterpret_cast<uint16_t*>(&(buffer[i])) = 1000;
-			}
-
-			int pointCount = 0;
-			generate_point_cloud(depthTemplateImage,
-				xyTableImage,
-				pointCloudTemplateImage,
-				&pointCount);
-
-			// Unity does not support DXGI_FORMAT_R32G32B32_FLOAT
-			// To work around this we convert to R32G32B32A32
-			k4a_image_t rgbaImage;
-			k4a_image_create(K4A_IMAGE_FORMAT_CUSTOM,
-				calibration.depth_camera_calibration.resolution_width,
-				calibration.depth_camera_calibration.resolution_height,
-				calibration.depth_camera_calibration.resolution_width * (int)sizeof(float) * 4,
-				&rgbaImage);
-
-			buffer = k4a_image_get_buffer(pointCloudTemplateImage);
-			byte *tempBuffer = k4a_image_get_buffer(rgbaImage);
-			for (int i = 0; i < k4a_image_get_width_pixels(rgbaImage) * k4a_image_get_height_pixels(rgbaImage); i++)
-			{
-				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i)]);
-				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 1)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i + 1)]);
-				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 2)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i + 2)]);
-				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 3)]) = 1.0;
-			}
-
-			UpdateResources(rgbaImage,
-				resources.pointCloudTemplateSrv,
-				resources.pointCloudTemplateTexture,
-				resources.pointCloudTemplateFrameDimensions,
-				DXGI_FORMAT_R32G32B32A32_FLOAT);
-
-			k4a_image_release(rgbaImage);
-			k4a_image_release(depthTemplateImage);
-		}
-
-		k4a_image_release(colorImage);
-		k4a_image_release(depthImage);
-		k4a_capture_release(capture);
 	}
 
-    return !observedFailure;
+    return true;
 }
 
 bool AzureKinectWrapper::TryGetCalibration(
@@ -457,35 +406,163 @@ void AzureKinectWrapper::StopStreaming(unsigned int index)
 	{
 		cachedColorImageBufferMap.erase(index);
 	}
+
+	if (_stopRequestedMap.count(index) != 0)
+	{
+		_stopRequestedMap[index] = true;
+	}
+
+	if (_captureThreads.count(index) != 0)
+	{
+		_captureThreads[index]->join();
+		_captureThreads.erase(index);
+	}
 }
 
-void AzureKinectWrapper::UpdateResources(k4a_image_t image,
-                                         ID3D11ShaderResourceView *&srv,
-                                         ID3D11Texture2D *&tex,
-                                         FrameDimensions &dim,
-                                         DXGI_FORMAT format)
+void AzureKinectWrapper::RunCaptureLoop(int index)
 {
-    EnterCriticalSection(&resourcesCritSec);
-    dim.height = k4a_image_get_height_pixels(image);
-    dim.width = k4a_image_get_width_pixels(image);
-    auto stride = k4a_image_get_stride_bytes(image);
-    dim.bpp = stride / dim.width;
-    auto buffer = k4a_image_get_buffer(image);
+	while (!_stopRequestedMap[index])
+	{
+		if (deviceMap.count(index) == 0 ||
+			_frameMap.count(index) == 0)
+		{
+			return;
+		}
 
-    if (tex == nullptr)
-    {
-        tex = DirectXHelper::CreateTexture(d3d11Device, buffer, dim.width, dim.height, dim.bpp, format);
-    }
+		auto device = deviceMap[index];
+		auto frame = _frameMap[index];
+		k4a_capture_t capture = nullptr;
+		bool observedFailure = false;
 
-    if (srv == nullptr)
-    {
-        srv = DirectXHelper::CreateShaderResourceView(d3d11Device, tex, format);
-    }
-    else
-    {
-        OutputDebugString(L"Updating shader resource view");
-        DirectXHelper::UpdateShaderResourceView(d3d11Device, srv, buffer, stride);
-    }
+		switch (k4a_device_get_capture(device, &capture, 0))
+		{
+		case K4A_WAIT_RESULT_SUCCEEDED:
+			break;
+		case K4A_WAIT_RESULT_TIMEOUT:
+			OutputDebugString(L"Timed out waiting for capture: " + index);
+			observedFailure = true;
+			break;
+		case K4A_WAIT_RESULT_FAILED:
+			OutputDebugString(L"Failed to capture: " + index);
+			observedFailure = true;
+			break;
+		}
 
-    LeaveCriticalSection(&resourcesCritSec);
+		if (!observedFailure)
+		{
+			auto resources = resourcesMap[index];
+
+			auto transformation = transformationMap[index];
+			auto transformedColorImage = transformedColorMap[index];
+
+			auto colorImage = k4a_capture_get_color_image(capture);
+			auto depthImage = k4a_capture_get_depth_image(capture);
+
+			if (frame->TryBeginWriting())
+			{
+				if (colorImage &&
+					depthImage)
+				{
+					if (cachedColorImageBufferMap.count(index) != 0)
+					{
+						auto colorImageBuffer = k4a_image_get_buffer(colorImage);
+						memcpy(cachedColorImageBufferMap[index].get(), colorImageBuffer, k4a_image_get_size(colorImage));
+					}
+
+					k4a_result_t result = k4a_transformation_color_image_to_depth_camera(
+						transformation,
+						depthImage,
+						colorImage,
+						transformedColorImage);
+
+					if (result == K4A_RESULT_SUCCEEDED)
+					{
+						frame->WriteImage(AzureKinectImageType::Color, transformedColorImage);
+					}
+				}
+
+				if (depthImage)
+				{
+					frame->WriteImage(AzureKinectImageType::Depth, depthImage);
+				}
+
+				if (depthImage &&
+					pointCloudTemplateMap.count(index) == 0)
+				{
+					auto xyTableImage = xyTableMap[index];
+					auto calibration = calibrationMap[index];
+
+					k4a_image_t pointCloudTemplateImage;
+					k4a_image_create(K4A_IMAGE_FORMAT_CUSTOM,
+						calibration.depth_camera_calibration.resolution_width,
+						calibration.depth_camera_calibration.resolution_height,
+						calibration.depth_camera_calibration.resolution_width * (int)sizeof(k4a_float3_t),
+						&pointCloudTemplateImage);
+					pointCloudTemplateMap[index] = pointCloudTemplateImage;
+
+					k4a_image_t depthTemplateImage;
+					k4a_image_create(k4a_image_get_format(depthImage),
+						calibration.depth_camera_calibration.resolution_width,
+						calibration.depth_camera_calibration.resolution_height,
+						k4a_image_get_stride_bytes(depthImage),
+						&depthTemplateImage);
+
+					// Getting depth projection for 1m depth;
+					auto buffer = k4a_image_get_buffer(depthTemplateImage);
+					for (int i = 0; i < k4a_image_get_size(depthTemplateImage); i += 2)
+					{
+						*reinterpret_cast<uint16_t*>(&(buffer[i])) = 1000;
+					}
+
+					int pointCount = 0;
+					generate_point_cloud(depthTemplateImage,
+						xyTableImage,
+						pointCloudTemplateImage,
+						&pointCount);
+
+					// Unity does not support DXGI_FORMAT_R32G32B32_FLOAT
+					// To work around this we convert to R32G32B32A32
+					k4a_image_t rgbaImage;
+					k4a_image_create(K4A_IMAGE_FORMAT_CUSTOM,
+						calibration.depth_camera_calibration.resolution_width,
+						calibration.depth_camera_calibration.resolution_height,
+						calibration.depth_camera_calibration.resolution_width * (int)sizeof(float) * 4,
+						&rgbaImage);
+
+					buffer = k4a_image_get_buffer(pointCloudTemplateImage);
+					byte *tempBuffer = k4a_image_get_buffer(rgbaImage);
+					for (int i = 0; i < k4a_image_get_width_pixels(rgbaImage) * k4a_image_get_height_pixels(rgbaImage); i++)
+					{
+						*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i)]);
+						*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 1)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i + 1)]);
+						*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 2)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i + 2)]);
+						*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 3)]) = 1.0;
+					}
+
+					frame->WriteImage(AzureKinectImageType::PointCloud, rgbaImage);
+					k4a_image_release(rgbaImage);
+					k4a_image_release(depthTemplateImage);
+				}
+
+				frame->EndWriting();
+			}
+
+			k4a_image_release(colorImage);
+			k4a_image_release(depthImage);
+			k4a_capture_release(capture);
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+	}
+}
+
+void AzureKinectWrapper::CreateResources(
+	byte* buffer,
+	ID3D11ShaderResourceView *&srv,
+	ID3D11Texture2D *&tex,
+	FrameDimensions &dim,
+	DXGI_FORMAT format)
+{
+	tex = DirectXHelper::CreateTexture(d3d11Device, buffer, dim.width, dim.height, dim.bpp, format);
+	srv = DirectXHelper::CreateShaderResourceView(d3d11Device, tex, format);
 }
