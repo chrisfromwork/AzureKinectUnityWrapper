@@ -6,13 +6,11 @@ std::shared_ptr<AzureKinectWrapper> AzureKinectWrapper::instance = nullptr;
 
 AzureKinectWrapper::AzureKinectWrapper(ID3D11Device *device)
 {
-    InitializeCriticalSection(&resourcesCritSec);
     this->d3d11Device = device;
 }
 
 AzureKinectWrapper::~AzureKinectWrapper()
 {
-    DeleteCriticalSection(&resourcesCritSec);
 	this->d3d11Device = nullptr;
 	StopStreamingAll();
 }
@@ -76,10 +74,8 @@ bool AzureKinectWrapper::TryGetShaderResourceViews(
 	unsigned int &pointCloudTemplateHeight,
 	unsigned int &pointCloudTemplateBpp)
 {
-    EnterCriticalSection(&resourcesCritSec);
     if (resourcesMap.count(index) == 0)
     {
-        LeaveCriticalSection(&resourcesCritSec);
         OutputDebugString(L"Resources not created for device: " + index);
         return false;
     }
@@ -99,8 +95,7 @@ bool AzureKinectWrapper::TryGetShaderResourceViews(
 	pointCloudTemplateHeight = resourcesMap[index]->pointCloudTemplateFrameDimensions.height;
 	pointCloudTemplateBpp = resourcesMap[index]->pointCloudTemplateFrameDimensions.bpp;
 
-    LeaveCriticalSection(&resourcesCritSec);
-    return true;
+	return true;
 }
 
 bool AzureKinectWrapper::TryStartStreams(
@@ -189,37 +184,30 @@ bool AzureKinectWrapper::TryStartStreams(
 		_frameMap[index] = std::make_shared<AzureKinectFrame>(colorDimensions, depthDimensions, pointCloudDimensions);
 	}
 
-	EnterCriticalSection(&resourcesCritSec);
 	if (resourcesMap.count(index) == 0)
 	{
 		auto frame = _frameMap[index];
-		frame->TryBeginReading();
 		std::shared_ptr<DeviceResources> resources = std::make_shared<DeviceResources>();
 		resources->rgbFrameDimensions = colorDimensions;
 		CreateResources(
-			_frameMap[index]->GetFrameBuffer(AzureKinectImageType::Color),
 			resources->rgbSrv,
 			resources->rgbTexture,
 			resources->rgbFrameDimensions,
 			DXGI_FORMAT_B8G8R8A8_UNORM);
 		resources->depthFrameDimensions = depthDimensions;
 		CreateResources(
-			_frameMap[index]->GetFrameBuffer(AzureKinectImageType::Depth),
 			resources->depthSrv,
 			resources->depthTexture,
 			resources->depthFrameDimensions,
 			DXGI_FORMAT_R16_UNORM);
 		resources->pointCloudTemplateFrameDimensions = pointCloudDimensions;
 		CreateResources(
-			_frameMap[index]->GetFrameBuffer(AzureKinectImageType::PointCloud),
 			resources->pointCloudTemplateSrv,
 			resources->pointCloudTemplateTexture,
 			resources->pointCloudTemplateFrameDimensions,
 			DXGI_FORMAT_R32G32B32A32_FLOAT);
-		frame->EndReading();
 		resourcesMap[index] = resources;
 	}
-	LeaveCriticalSection(&resourcesCritSec);
 
 	_stopRequestedMap[index] = false;
 	_captureThreads[index] = std::make_shared<std::thread>(std::bind(&AzureKinectWrapper::RunCaptureLoop, this, index));
@@ -252,28 +240,24 @@ bool AzureKinectWrapper::TryUpdate()
 		{
 			auto resources = resourcesMap[index];
 			auto frame = _frameMap[index];
-			if (frame->TryBeginReading())
-			{
-				frame->ReadImage(
-					AzureKinectImageType::Color,
-					d3d11Device,
-					resources->rgbSrv,
-					resources->rgbTexture,
-					resources->rgbFrameDimensions);
-				frame->ReadImage(
-					AzureKinectImageType::Depth,
-					d3d11Device,
-					resources->depthSrv,
-					resources->depthTexture,
-					resources->depthFrameDimensions);
-				frame->ReadImage(
-					AzureKinectImageType::PointCloud,
-					d3d11Device,
-					resources->pointCloudTemplateSrv,
-					resources->pointCloudTemplateTexture,
-					resources->pointCloudTemplateFrameDimensions);
-				frame->EndReading();
-			}
+			frame->ReadImage(
+				AzureKinectImageType::Color,
+				d3d11Device,
+				resources->rgbSrv,
+				resources->rgbTexture,
+				resources->rgbFrameDimensions);
+			frame->ReadImage(
+				AzureKinectImageType::Depth,
+				d3d11Device,
+				resources->depthSrv,
+				resources->depthTexture,
+				resources->depthFrameDimensions);
+			frame->ReadImage(
+				AzureKinectImageType::PointCloud,
+				d3d11Device,
+				resources->pointCloudTemplateSrv,
+				resources->pointCloudTemplateTexture,
+				resources->pointCloudTemplateFrameDimensions);
 		}
 	}
 
@@ -557,12 +541,12 @@ void AzureKinectWrapper::RunCaptureLoop(int index)
 }
 
 void AzureKinectWrapper::CreateResources(
-	byte* buffer,
 	ID3D11ShaderResourceView *&srv,
 	ID3D11Texture2D *&tex,
 	FrameDimensions &dim,
 	DXGI_FORMAT format)
 {
-	tex = DirectXHelper::CreateTexture(d3d11Device, buffer, dim.width, dim.height, dim.bpp, format);
+	// Figure out how to better clean up this data buffer
+	tex = DirectXHelper::CreateTexture(d3d11Device, new byte[dim.width * dim.height * dim.bpp], dim.width, dim.height, dim.bpp, format);
 	srv = DirectXHelper::CreateShaderResourceView(d3d11Device, tex, format);
 }

@@ -26,7 +26,6 @@ public:
 		AzureKinectImageType imageType,
 		k4a_image_t image);
 	void EndWriting();
-	bool TryBeginReading();
 	byte* GetFrameBuffer(
 		AzureKinectImageType imageType);
 	void ReadImage(
@@ -35,19 +34,17 @@ public:
 		ID3D11ShaderResourceView *&srv,
 		ID3D11Texture2D *&tex,
 		FrameDimensions &dim);
-	void EndReading();
 	
 private:
 	enum class FrameStatus
 	{
 		Ready,
-		Writing,
-		Reading
+		Writing
 	};
 
 	FrameDimensions _imageDimensions[AZURE_KINECT_IMAGE_TYPE_COUNT];
 	byte* _images[AZURE_KINECT_IMAGE_TYPE_COUNT] = { nullptr };
-	std::mutex _statusGuard;
+	CRITICAL_SECTION _critSection;
 	FrameStatus _status;
 };
 

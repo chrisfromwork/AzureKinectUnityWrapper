@@ -14,33 +14,40 @@ AzureKinectFrame::AzureKinectFrame(
 	_imageDimensions[static_cast<int>(AzureKinectImageType::PointCloud)] = pointCloudImageDimensions;
 	_images[static_cast<int>(AzureKinectImageType::PointCloud)] = new uint8_t[pointCloudImageDimensions.bpp * pointCloudImageDimensions.width * pointCloudImageDimensions.height];
 	_status = FrameStatus::Ready;
+	InitializeCriticalSection(&_critSection);
 }
 
 AzureKinectFrame::~AzureKinectFrame()
 {
+	EnterCriticalSection(&_critSection);
 	for (int i = 0; i < AZURE_KINECT_IMAGE_TYPE_COUNT; i++)
 	{
 		delete[] _images[i];
 	}
+	LeaveCriticalSection(&_critSection);
+
+	DeleteCriticalSection(&_critSection);
 }
 
 bool AzureKinectFrame::TryBeginWriting()
 {
-	std::lock_guard<std::mutex> guard(_statusGuard);
+	bool success = false;
+	EnterCriticalSection(&_critSection);
 	if (_status == FrameStatus::Ready)
 	{
 		_status = FrameStatus::Writing;
-		return true;
+		success = true;
 	}
+	LeaveCriticalSection(&_critSection);
 
-	return false;
+	return success;
 }
 
 void AzureKinectFrame::WriteImage(
 	AzureKinectImageType imageType,
 	k4a_image_t image)
 {
-	std::lock_guard<std::mutex> guard(_statusGuard);
+	EnterCriticalSection(&_critSection);
 	if (_status == FrameStatus::Writing)
 	{
 		auto imageSize = k4a_image_get_stride_bytes(image) * k4a_image_get_height_pixels(image);
@@ -53,39 +60,30 @@ void AzureKinectFrame::WriteImage(
 			memcpy(_images[static_cast<int>(imageType)], imageBuffer, localImageSize);
 		}
 	}
+	LeaveCriticalSection(&_critSection);
 }
 
 void AzureKinectFrame::EndWriting()
 {
-	std::lock_guard<std::mutex> guard(_statusGuard);
+	EnterCriticalSection(&_critSection);
 	if (_status == FrameStatus::Writing)
 	{
 		_status = FrameStatus::Ready;
 	}
-}
-
-bool AzureKinectFrame::TryBeginReading()
-{
-	std::lock_guard<std::mutex> guard(_statusGuard);
-	if (_status == FrameStatus::Ready)
-	{
-		_status = FrameStatus::Reading;
-		return true;
-	}
-
-	return false;
+	LeaveCriticalSection(&_critSection);
 }
 
 byte* AzureKinectFrame::GetFrameBuffer(
 	AzureKinectImageType imageType)
 {
-	std::lock_guard<std::mutex> guard(_statusGuard);
-	if (_status == FrameStatus::Reading)
+	byte* output = nullptr;
+	if (TryEnterCriticalSection(&_critSection))
 	{
-		return _images[static_cast<int>(imageType)];
+		output = _images[static_cast<int>(imageType)];
+		LeaveCriticalSection(&_critSection);
 	}
 
-	return nullptr;
+	return output;
 }
 
 void AzureKinectFrame::ReadImage(
@@ -95,8 +93,7 @@ void AzureKinectFrame::ReadImage(
 	ID3D11Texture2D *&tex,
 	FrameDimensions &dim)
 {
-	std::lock_guard<std::mutex> guard(_statusGuard);
-	if (_status == FrameStatus::Reading)
+	if (TryEnterCriticalSection(&_critSection))
 	{
 		auto dimensions = _imageDimensions[static_cast<int>(imageType)];
 		dim.height = dimensions.height;
@@ -112,14 +109,6 @@ void AzureKinectFrame::ReadImage(
 		}
 
 		DirectXHelper::UpdateShaderResourceView(d3d11Device, srv, buffer, stride);
-	}
-}
-
-void AzureKinectFrame::EndReading()
-{
-	std::lock_guard<std::mutex> guard(_statusGuard);
-	if (_status == FrameStatus::Reading)
-	{
-		_status = FrameStatus::Ready;
+		LeaveCriticalSection(&_critSection);
 	}
 }

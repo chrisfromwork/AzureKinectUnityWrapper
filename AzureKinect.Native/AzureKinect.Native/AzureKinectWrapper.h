@@ -80,7 +80,6 @@ private:
 	void StopStreamingAll();
 	void RunCaptureLoop(int index);
 	void CreateResources(
-		byte *buffer,
 		ID3D11ShaderResourceView *&srv,
 		ID3D11Texture2D *&tex,
 		FrameDimensions &dim,
@@ -91,7 +90,6 @@ private:
     std::map<int, k4a_device_t> deviceMap;
 
 	std::map<int, std::shared_ptr<DeviceResources>> resourcesMap;
-    CRITICAL_SECTION resourcesCritSec;
 	k4a_device_configuration_t config = K4A_DEVICE_CONFIG_INIT_DISABLE_ALL;
 	
 	std::map<int, int> cachedColorImageSizeMap;
