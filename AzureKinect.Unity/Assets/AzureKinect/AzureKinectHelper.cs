@@ -1,9 +1,4 @@
-﻿using Microsoft.MixedReality.PhotoCapture;
-using Microsoft.MixedReality.SpectatorView;
-using System.Collections;
-using System.Collections.Generic;
-using System.Diagnostics;
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 
 public class AzureKinectHelper : MonoBehaviour
@@ -32,40 +27,10 @@ public class AzureKinectHelper : MonoBehaviour
     [SerializeField]
     RawImage pointCloudImage = null;
 
-    [SerializeField]
-    float markerSize = 0.05f;
-
-    [SerializeField]
-    GameObject markerVisualPrefab;
-
-    [SerializeField]
-    bool testMarker = false;
-
-    [SerializeField]
-    Vector3 testMarkerPosition;
-
-    private SpectatorViewOpenCVInterface opencvAPI;
-    private byte[] colorImage;
-    private Dictionary<int, GameObject> markerPrefab = new Dictionary<int, GameObject>();
-    private bool locatingMarker = false;
-
-    public void StartLocatingMarker()
-    {
-        AzureKinectUnityAPI.Instance(deviceIndex).PointTransform = Matrix4x4.identity;
-        locatingMarker = true;
-    }
-
-    public void StopLocatingMarker()
-    {
-        locatingMarker = false;
-    }
-
     protected void Awake()
     {
         AzureKinectUnityAPI.Instance(deviceIndex).SetConfiguration(colorFormat, colorResolution, depthMode, fps);
         AzureKinectUnityAPI.Instance(deviceIndex).Start();
-        opencvAPI = new SpectatorViewOpenCVInterface();
-        opencvAPI.Initialize(markerSize);
     }
 
     protected void OnDestroy()
@@ -76,6 +41,7 @@ public class AzureKinectHelper : MonoBehaviour
     protected void Update()
     {
         AzureKinectUnityAPI.Instance(deviceIndex).Update();
+
         if (rgbImage != null &&
             rgbImage.texture == null &&
             AzureKinectUnityAPI.Instance(deviceIndex).RGBTexture != null)
@@ -96,44 +62,15 @@ public class AzureKinectHelper : MonoBehaviour
         {
             pointCloudImage.texture = AzureKinectUnityAPI.Instance(deviceIndex).PointCloudTemplateTexture;
         }
+    }
 
-        if (locatingMarker)
-        {
-            if (testMarker)
-            {
-                AzureKinectUnityAPI.Instance(deviceIndex).PointTransform = Matrix4x4.TRS(testMarkerPosition, Quaternion.identity, Vector3.one);
-                locatingMarker = false;
-            }
-            else if (AzureKinectUnityAPI.Instance(deviceIndex).ColorIntrinsics != null &&
-                AzureKinectUnityAPI.Instance(deviceIndex).TryGetColorImageBuffer(ref colorImage))
-            {
-                CameraExtrinsics extrinsics = new CameraExtrinsics();
-                extrinsics.ViewFromWorld = Matrix4x4.identity;
-                Dictionary<int, Marker> dictionary = opencvAPI.ProcessImage(
-                    colorImage,
-                    AzureKinectUnityAPI.Instance(deviceIndex).ColorIntrinsics.ImageWidth,
-                    AzureKinectUnityAPI.Instance(deviceIndex).ColorIntrinsics.ImageHeight,
-                    PixelFormat.BGRA8,
-                    AzureKinectUnityAPI.Instance(deviceIndex).ColorIntrinsics,
-                    new CameraExtrinsics());
+    public bool TryGetImageBuffers(out byte[] transformedColorImageBuffer, out byte[] depthImageBuffer, out byte[] pointCloudImageBuffer)
+    {
+        return AzureKinectUnityAPI.Instance(deviceIndex).TryGetImageBuffers(out transformedColorImageBuffer, out depthImageBuffer, out pointCloudImageBuffer);
+    }
 
-                foreach (var markerPair in dictionary)
-                {
-                    if (!markerPrefab.TryGetValue(markerPair.Key, out var go) &&
-                        markerVisualPrefab != null)
-                    {
-                        go = Instantiate(markerVisualPrefab);
-                        markerPrefab.Add(markerPair.Key, go);
-                        go.transform.localScale *= markerSize;
-                    }
-
-                    // We won't support multiple markers.
-                    var markerTransform = Matrix4x4.TRS(markerPair.Value.Position, markerPair.Value.Rotation, Vector3.one);
-                    AzureKinectUnityAPI.Instance(deviceIndex).PointTransform = markerTransform.inverse;
-                    locatingMarker = false;
-                    break;
-                }
-            }
-        }
+    public Texture2D GetRGBTexture()
+    {
+        return AzureKinectUnityAPI.Instance(deviceIndex).RGBTexture;
     }
 }

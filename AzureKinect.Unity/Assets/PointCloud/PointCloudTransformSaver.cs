@@ -41,6 +41,9 @@ public class PointCloudTransformSaver : MonoBehaviour
     [SerializeField]
     private string fileName = "PointCloudDetails.json";
 
+    [SerializeField]
+    public KeyCode saveKeyCode = KeyCode.S;
+
     private PointCloudHelper[] pointClouds;
 
     void Start()
@@ -60,7 +63,7 @@ public class PointCloudTransformSaver : MonoBehaviour
 
     void Update()
     {
-        if (Input.GetKeyDown(KeyCode.S))
+        if (Input.GetKeyDown(saveKeyCode))
         {
             List<PointCloudDetails> details = new List<PointCloudDetails>();
             foreach (var pointCloud in pointClouds)
