@@ -121,6 +121,9 @@ bool AzureKinectWrapper::TryStartStreams(
 	k4a_transformation_t transformation;
 	k4a_image_t transformedColorImage;
 	k4a_image_t xyTableImage;
+	int rgbSize = 0;
+	int depthSize = 0;
+	int pointCloudSize = 0;
 
 	if (static_cast<unsigned int>(index) > GetDeviceCount() - 1)
 	{
@@ -163,13 +166,35 @@ bool AzureKinectWrapper::TryStartStreams(
 	k4a_image_create(K4A_IMAGE_FORMAT_CUSTOM,
 		calibration.depth_camera_calibration.resolution_width,
 		calibration.depth_camera_calibration.resolution_height,
-		calibration.depth_camera_calibration.resolution_width * (int)sizeof(k4a_float2_t),
+		calibration.depth_camera_calibration.resolution_width * (int)sizeof(k4a_float3_t),
 		&xyTableImage);
 	create_xy_table(&calibration, xyTableImage);
 	xyTableMap[index] = xyTableImage;
 
-	cachedColorImageSizeMap[index] = calibration.color_camera_calibration.resolution_width * calibration.color_camera_calibration.resolution_height * 4 * sizeof(uint8_t);
-	cachedColorImageBufferMap[index] = std::make_unique<byte[]>(cachedColorImageSizeMap[index]);
+	resourcesMap[index] = DeviceResources
+	{
+		nullptr,
+		nullptr,
+		FrameDimensions{
+			static_cast<unsigned int>(calibration.depth_camera_calibration.resolution_width),
+			static_cast<unsigned int>(calibration.depth_camera_calibration.resolution_height),
+			static_cast<unsigned int>(4 * sizeof(uint8_t))},
+		nullptr,
+		nullptr,
+		FrameDimensions{
+			static_cast<unsigned int>(calibration.depth_camera_calibration.resolution_width),
+			static_cast<unsigned int>(calibration.depth_camera_calibration.resolution_height),
+			static_cast<unsigned int>(sizeof(uint16_t))},
+		nullptr,
+		nullptr,
+		FrameDimensions{
+			static_cast<unsigned int>(calibration.depth_camera_calibration.resolution_width),
+			static_cast<unsigned int>(calibration.depth_camera_calibration.resolution_height),
+			static_cast<unsigned int>(4 * sizeof(float))} };
+
+	cachedTransformedColorImageBufferMap[index] = std::make_shared<ImageBuffer>(resourcesMap[index].rgbFrameDimensions);
+	cachedDepthImageBufferMap[index] = std::make_shared<ImageBuffer>(resourcesMap[index].depthFrameDimensions);
+	cachedPointCloudTemplateImageBufferMap[index] = std::make_shared<ImageBuffer>(resourcesMap[index].pointCloudTemplateFrameDimensions);
 
 	return true;
 
@@ -229,12 +254,6 @@ bool AzureKinectWrapper::TryUpdate()
 		if (colorImage &&
 			depthImage)
 		{
-			if (cachedColorImageBufferMap.count(pair.first) != 0)
-			{
-				auto colorImageBuffer = k4a_image_get_buffer(colorImage);
-				memcpy(cachedColorImageBufferMap[pair.first].get(), colorImageBuffer, k4a_image_get_size(colorImage));
-			}
-
 			k4a_result_t result = k4a_transformation_color_image_to_depth_camera(
 				transformation,
 				depthImage,
@@ -243,6 +262,12 @@ bool AzureKinectWrapper::TryUpdate()
 
 			if (result == K4A_RESULT_SUCCEEDED)
 			{
+				if (cachedTransformedColorImageBufferMap.count(pair.first) != 0)
+				{
+					auto transformedColorImageBuffer = k4a_image_get_buffer(transformedColorImage);
+					memcpy(cachedTransformedColorImageBufferMap[pair.first]->buffer->data(), transformedColorImageBuffer, cachedTransformedColorImageBufferMap[pair.first]->GetSize());
+				}
+
 				UpdateResources(transformedColorImage,
 					resources.rgbSrv,
 					resources.rgbTexture,
@@ -253,6 +278,12 @@ bool AzureKinectWrapper::TryUpdate()
 
 		if (depthImage)
 		{
+			if (cachedDepthImageBufferMap.count(pair.first) != 0)
+			{
+				auto depthImageBuffer = k4a_image_get_buffer(depthImage);
+				memcpy(cachedDepthImageBufferMap[pair.first]->buffer->data(), depthImageBuffer, cachedDepthImageBufferMap[pair.first]->GetSize());
+			}
+
 			UpdateResources(depthImage,
 				resources.depthSrv,
 				resources.depthTexture,
@@ -311,6 +342,11 @@ bool AzureKinectWrapper::TryUpdate()
 				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 1)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i + 1)]);
 				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 2)]) = *reinterpret_cast<float*>(&buffer[sizeof(float) * (3 * i + 2)]);
 				*reinterpret_cast<float*>(&tempBuffer[sizeof(float) * (4 * i + 3)]) = 1.0;
+			}
+
+			if (cachedPointCloudTemplateImageBufferMap.count(pair.first) != 0)
+			{
+				memcpy(cachedPointCloudTemplateImageBufferMap[pair.first]->buffer->data(), tempBuffer, cachedPointCloudTemplateImageBufferMap[pair.first]->GetSize());
 			}
 
 			UpdateResources(rgbaImage,
@@ -380,21 +416,41 @@ bool AzureKinectWrapper::TryGetCalibration(
 	return true;
 }
 
-bool AzureKinectWrapper::TryGetCachedColorImage(int index, byte *data, int size, int *imageWidth, int *imageHeight, int *bytesPerPixel)
+bool AzureKinectWrapper::TryGetImageBuffers(
+	int index,
+	byte *transformedColorImageData,
+	int transformedColorImageSize,
+	byte *depthImageData,
+	int depthImageSize,
+	byte *pointCloudTemplateImageData,
+	int pointCloudTemplateImageSize)
 {
-	if (cachedColorImageSizeMap.count(index) == 0 ||
-		cachedColorImageBufferMap.count(index) == 0 ||
-		cachedColorImageSizeMap[index] > size ||
-		calibrationMap.count(index) == 0)
+	if (cachedTransformedColorImageBufferMap.count(index) > 0 &&
+		cachedDepthImageBufferMap.count(index) > 0 &&
+		cachedPointCloudTemplateImageBufferMap.count(index) > 0)
 	{
-		return false;
+		int colorSize = cachedTransformedColorImageBufferMap[index]->GetSize();
+		if (transformedColorImageSize == colorSize)
+		{
+			memcpy(transformedColorImageData, cachedTransformedColorImageBufferMap[index]->buffer->data(), transformedColorImageSize);
+		}
+
+		int depthSize = cachedDepthImageBufferMap[index]->GetSize();
+		if (depthImageSize == depthSize)
+		{
+			memcpy(depthImageData, cachedDepthImageBufferMap[index]->buffer->data(), depthImageSize);
+		}
+
+		int pointCloudSize = cachedPointCloudTemplateImageBufferMap[index]->GetSize();
+		if (pointCloudTemplateImageSize == pointCloudSize)
+		{
+			memcpy(pointCloudTemplateImageData, cachedPointCloudTemplateImageBufferMap[index]->buffer->data(), pointCloudTemplateImageSize);
+		}
+
+		return true;
 	}
 
-	memcpy(data, cachedColorImageBufferMap[index].get(), cachedColorImageSizeMap[index]);
-	*imageWidth = calibrationMap[index].color_camera_calibration.resolution_width;
-	*imageHeight = calibrationMap[index].color_camera_calibration.resolution_height;
-	*bytesPerPixel = 4; // Assuming BGRA8
-	return true;
+	return false;
 }
 
 void AzureKinectWrapper::StopStreamingAll()
@@ -453,9 +509,19 @@ void AzureKinectWrapper::StopStreaming(unsigned int index)
 		pointCloudTemplateMap.erase(index);
 	}
 
-	if (cachedColorImageBufferMap.count(index) != 0)
+	if (cachedTransformedColorImageBufferMap.count(index) != 0)
 	{
-		cachedColorImageBufferMap.erase(index);
+		cachedTransformedColorImageBufferMap.erase(index);
+	}
+
+	if (cachedDepthImageBufferMap.count(index) != 0)
+	{
+		cachedDepthImageBufferMap.erase(index);
+	}
+
+	if (cachedPointCloudTemplateImageBufferMap.count(index) != 0)
+	{
+		cachedPointCloudTemplateImageBufferMap.erase(index);
 	}
 }
 

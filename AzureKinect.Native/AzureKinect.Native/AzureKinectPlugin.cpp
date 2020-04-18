@@ -148,23 +148,25 @@ UNITYDLL bool TryGetCalibration(
 	return false;
 }
 
-UNITYDLL bool TryGetCachedColorImage(
+UNITYDLL bool TryGetImageBuffers(
 	int index,
-	byte *data,
-	int size,
-	int *imageWidth,
-	int *imageHeight,
-	int *bytesPerPixel)
+	byte *transformedColorImageData,
+	int transformedColorImageSize,
+	byte *depthImageData,
+	int depthImageSize,
+	byte *pointCloudTemplateImageData,
+	int pointCloudTemplateImageSize)
 {
 	if (azureKinectWrapper != nullptr)
 	{
-		return azureKinectWrapper->TryGetCachedColorImage(
+		return azureKinectWrapper->TryGetImageBuffers(
 			index,
-			data,
-			size,
-			imageWidth,
-			imageHeight,
-			bytesPerPixel);
+			transformedColorImageData,
+			transformedColorImageSize,
+			depthImageData,
+			depthImageSize,
+			pointCloudTemplateImageData,
+			pointCloudTemplateImageSize);
 	}
 
 	return false;

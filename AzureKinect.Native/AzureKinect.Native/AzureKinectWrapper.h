@@ -48,13 +48,14 @@ public:
 		int *depthIntrinsicsCount,
 		int depthIntrinsicsLength,
 		float *depthIntrinsics);
-	bool TryGetCachedColorImage(
+	bool TryGetImageBuffers(
 		int index,
-		byte *data,
-		int size,
-		int *imageWidth,
-		int *imageHeight,
-		int *bytesPerPixel);
+		byte *transformedColorImageData,
+		int transformedColorImageSize,
+		byte *depthImageData,
+		int depthImageSize,
+		byte *pointCloudTemplateImageData,
+		int pointCloudTemplateImageSize);
     void StopStreaming(unsigned int index);
 
 private:
@@ -78,6 +79,24 @@ private:
 		FrameDimensions pointCloudTemplateFrameDimensions;
     };
 
+	class ImageBuffer
+	{
+	public:
+		ImageBuffer(FrameDimensions dimensions)
+		{
+			this->dimensions = dimensions;
+			buffer = std::make_shared<std::vector<byte>>(GetSize());
+		}
+
+		int GetSize()
+		{
+			return dimensions.bpp * dimensions.height * dimensions.width;
+		}
+
+		FrameDimensions dimensions;
+		std::shared_ptr<std::vector<byte>> buffer;
+	};
+
     void UpdateResources(
 		k4a_image_t image,
         ID3D11ShaderResourceView *&srv,
@@ -94,8 +113,9 @@ private:
     CRITICAL_SECTION resourcesCritSec;
 	k4a_device_configuration_t config = K4A_DEVICE_CONFIG_INIT_DISABLE_ALL;
 	
-	std::map<int, int> cachedColorImageSizeMap;
-	std::map<int, std::unique_ptr<byte[]>> cachedColorImageBufferMap;
+	std::map<int, std::shared_ptr<ImageBuffer>> cachedTransformedColorImageBufferMap;
+	std::map<int, std::shared_ptr<ImageBuffer>> cachedDepthImageBufferMap;
+	std::map<int, std::shared_ptr<ImageBuffer>> cachedPointCloudTemplateImageBufferMap;
 	std::map<int, k4a_calibration_t> calibrationMap;
 	std::map<int, k4a_transformation_t> transformationMap;
 	std::map<int, k4a_image_t> transformedColorMap;
